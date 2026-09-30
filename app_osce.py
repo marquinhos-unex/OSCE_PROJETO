@@ -438,9 +438,15 @@ else:
         st.markdown("**Pré-visualização do Documento**")
         try:
             pdf_bytes = gerar_bytes_pdf_osce(dados_atual)
-            base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="480" type="application/pdf"></iframe>'
-            st.markdown(pdf_display, unsafe_allow_html=True)
+            
+            # Converter a primeira página do PDF para Imagem PNG
+            doc_pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+            page = doc_pdf[0]
+            pix = page.get_pixmap(dpi=150)
+            img_bytes = pix.tobytes("png")
+            
+            # Exibir a imagem tratada
+            st.image(img_bytes, use_column_width=True)
             
             st.download_button(
                 label="📥 Baixar PDF em Folha A4",
@@ -451,7 +457,6 @@ else:
             )
         except Exception as e:
             st.error(f"Erro na visualização: {e}")
-
         st.markdown("<br>", unsafe_allow_html=True)
 
         st.info(f"**Resumo:** {componente} | {semestre} | {etapa}")
