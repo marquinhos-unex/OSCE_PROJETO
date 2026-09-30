@@ -452,7 +452,7 @@ else:
             img_bytes = pix.tobytes("png")
             
             # Exibir a imagem tratada no Streamlit
-            st.image(img_bytes, use_column_width=True)
+            st.image(img_bytes, use_container_width=True)
             
             st.download_button(
                 label="📥 Baixar PDF em Folha A4",
