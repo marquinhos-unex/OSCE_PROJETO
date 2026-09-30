@@ -1,2 +1,4 @@
-reportlab
+streamlit
 pandas
+reportlab
+pymupdf
