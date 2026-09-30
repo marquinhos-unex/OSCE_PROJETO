@@ -1,3 +1,14 @@
+import sys
+import subprocess
+
+# Instalação automática das dependências caso não estejam no ambiente
+for pkg, import_name in [("pymupdf", "fitz"), ("reportlab", "reportlab")]:
+    try:
+        __import__(import_name)
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+
+import fitz  # PyMuPDF
 import base64
 import os
 import re
@@ -337,13 +348,11 @@ else:
     # --------------------------------------------------
     c_top_1, c_top_2 = st.columns([3, 1])
     with c_top_2:
-        # st.popover cria o botão que abre o menu suspenso
         with st.popover(f"👤 {usuario_atual['nome']}", use_container_width=True):
             st.markdown(f"**Sessão Ativa**")
             st.caption(f"E-mail: {usuario_atual['email']}")
             st.divider()
             
-            # O botão de logout fica protegido/escondido dentro do popover
             if st.button("🚪 Terminar Sessão", type="primary", use_container_width=True):
                 st.session_state["utilizador"] = None
                 st.rerun()
@@ -355,10 +364,8 @@ else:
     # COLUNA ESQUERDA: FORMULÁRIO COM ROLAGEM PRÓPRIA
     # --------------------------------------------------
     with col_esquerda:
-        # st.container(height=...) CRIA A BARRA DE ROLAGEM APENAS NO FORM
         with st.container(height=600, border=True):
             st.subheader("Cabeçalho")
-            # Lista de componentes curriculares cadastrados
             lista_componentes = [
                 "Habilidades Médicas I",
                 "Habilidades Médicas II",
@@ -378,7 +385,6 @@ else:
                 key="select_componente"
             )
             
-            # Se escolher "Outro", abre um campo de texto para digitar
             if componente_selecionado == "Outro (Digitar manualmente...)":
                 componente = st.text_input("Especifique o Componente", key="custom_componente")
             else:
@@ -445,7 +451,7 @@ else:
             pix = page.get_pixmap(dpi=150)
             img_bytes = pix.tobytes("png")
             
-            # Exibir a imagem tratada
+            # Exibir a imagem tratada no Streamlit
             st.image(img_bytes, use_column_width=True)
             
             st.download_button(
@@ -457,6 +463,7 @@ else:
             )
         except Exception as e:
             st.error(f"Erro na visualização: {e}")
+
         st.markdown("<br>", unsafe_allow_html=True)
 
         st.info(f"**Resumo:** {componente} | {semestre} | {etapa}")
