@@ -121,98 +121,67 @@ def excluir_estacao_db(estacao_id, prof_id):
     return linhas_afetadas > 0
 
 # ==========================================
-# 2. PROCESSADORES DE TEXTO (FORMATADORES)
+# 2. PROCESSADORES DE SEGMENTOS DE TEXTO
 # ==========================================
 
-def processar_item_texto_pdf(texto):
-    if not isinstance(texto, str) or pd.isna(texto) or not texto.strip():
+def formatar_segmentos_pdf(lista_segmentos):
+    """
+    Recebe uma lista de dicionários ou DataFrame [{'Tipo': ..., 'Texto': ...}]
+    e gera a string HTML para o ReportLab.
+    """
+    if not lista_segmentos:
         return ""
     
-    # Processamento por Marcadores/Tags [e], [a], [f]
-    if any(tag in texto for tag in ['[e]', '[a]', '[f]', '[estudante]', '[ator]', '[fala]']):
-        t = texto.replace('[estudante]', '[e]').replace('[ator]', '[a]').replace('[fala]', '[f]')
-        partes = re.split(r'(\[e\]|\[a\]|\[f\])', t)
-        
-        html_result = ""
-        tag_atual = None
-        
-        for p in partes:
-            if p in ['[e]', '[a]', '[f]']:
-                tag_atual = p
-            elif p and tag_atual:
-                if tag_atual == '[e]':
-                    html_result += f'<font color="#D00000"><i>{p}</i></font>'
-                elif tag_atual == '[a]':
-                    html_result += f'<b>{p}</b>'
-                elif tag_atual == '[f]':
-                    html_result += f'<b>{p}</b>'
-            elif p:
-                html_result += p
-                
-        return html_result
+    html_partes = []
+    for seg in lista_segmentos:
+        tipo = seg.get('Tipo', '')
+        texto = str(seg.get('Texto', '')).strip()
+        if not texto:
+            continue
+            
+        if "Rúbrica" in tipo:
+            html_partes.append(f'<font color="#D00000"><i>{texto}</i></font>')
+        elif "Ator" in tipo or "Fala" in tipo:
+            # Adiciona aspas se for fala do paciente e não tiver
+            if "Fala" in tipo and not (texto.startswith('"') or texto.startswith('“')):
+                texto = f'"{texto}"'
+            html_partes.append(f'<b>{texto}</b>')
+        else:
+            html_partes.append(texto)
+            
+    return " ".join(html_partes)
 
-    # Regras Legadas de Fallback
-    if '|' in texto:
-        partes = texto.split('|', 1)
-        rubrica = partes[0].strip()
-        fala_ator = partes[1].strip()
-        if fala_ator and not (fala_ator.startswith('"') or fala_ator.startswith('“')):
-            fala_ator = f'"{fala_ator}"'
-        return f'<font color="#D00000"><i>{rubrica}</i></font> <b>{fala_ator}</b>'
-
-    if 'Estudante:' in texto:
-        partes = texto.split('Estudante:', 1)
-        return f'{partes[0]}<font color="#D00000"><i>Estudante:{partes[1]}</i></font>'
-        
-    return texto
-
-def formatar_paragrafo_item_docx(paragraph, item_num, texto_raw):
+def formatar_segmentos_docx(paragraph, item_num, lista_segmentos):
+    """
+    Aplica os segmentos formatados diretamente no parágrafo do python-docx.
+    """
     p_run = paragraph.add_run(f"{item_num}. ")
     p_run.bold = True
     
-    if not isinstance(texto_raw, str) or pd.isna(texto_raw) or not texto_raw.strip():
+    if not lista_segmentos:
         return
 
-    texto = texto_raw.strip()
-
-    # Suporte a Marcadores/Tags [e], [a], [f]
-    if any(tag in texto for tag in ['[e]', '[a]', '[f]', '[estudante]', '[ator]', '[fala]']):
-        t = texto.replace('[estudante]', '[e]').replace('[ator]', '[a]').replace('[fala]', '[f]')
-        partes = re.split(r'(\[e\]|\[a\]|\[f\])', t)
+    primeiro = True
+    for seg in lista_segmentos:
+        tipo = seg.get('Tipo', '')
+        texto = str(seg.get('Texto', '')).strip()
+        if not texto:
+            continue
+            
+        prefixo = "" if primeiro else " "
+        primeiro = False
         
-        tag_atual = None
-        for p in partes:
-            if p in ['[e]', '[a]', '[f]']:
-                tag_atual = p
-            elif p and tag_atual:
-                run = paragraph.add_run(p)
-                if tag_atual == '[e]':
-                    run.italic = True
-                    run.font.color.rgb = RGBColor(208, 0, 0)
-                elif tag_atual in ['[a]', '[f]']:
-                    run.bold = True
-            elif p:
-                paragraph.add_run(p)
-        return
-
-    # Regras Legadas de Fallback
-    if '|' in texto:
-        partes = texto.split('|', 1)
-        run_rub = paragraph.add_run(partes[0].strip() + " ")
-        run_rub.italic = True
-        run_rub.font.color.rgb = RGBColor(208, 0, 0)
-        
-        run_fala = paragraph.add_run(partes[1].strip())
-        run_fala.bold = True
-    elif 'Estudante:' in texto:
-        partes = texto.split('Estudante:', 1)
-        if partes[0]:
-            paragraph.add_run(partes[0])
-        run_est = paragraph.add_run("Estudante:" + partes[1])
-        run_est.italic = True
-        run_est.font.color.rgb = RGBColor(208, 0, 0)
-    else:
-        paragraph.add_run(texto)
+        if "Rúbrica" in tipo:
+            run = paragraph.add_run(f"{prefixo}{texto}")
+            run.italic = True
+            run.font.color.rgb = RGBColor(208, 0, 0)
+        elif "Ator" in tipo or "Fala" in tipo:
+            if "Fala" in tipo and not (texto.startswith('"') or texto.startswith('“')):
+                texto = f'"{texto}"'
+            run = paragraph.add_run(f"{prefixo}{texto}")
+            run.bold = True
+        else:
+            paragraph.add_run(f"{prefixo}{texto}")
 
 # ==========================================
 # 3. GERADOR DE PDF (REPORTLAB)
@@ -302,10 +271,10 @@ def gerar_bytes_pdf_osce(dados_estacao):
     ]
 
     for i in range(1, 11):
-        chave_item = f'item_{i}'
-        texto_item_raw = str(dados_estacao.get(chave_item, ''))
-        texto_item_formatado = f"<b>{i}.</b> " + processar_item_texto_pdf(texto_item_raw) if (texto_item_raw and texto_item_raw != 'nan') else f"<b>{i}.</b>"
-        dados_checklist.append([Paragraph(texto_item_formatado, style_tabela_item), "", "", ""])
+        segmentos_item = dados_estacao.get(f'item_struct_{i}', [])
+        texto_item_html = formatar_segmentos_pdf(segmentos_item)
+        texto_exibicao = f"<b>{i}.</b> {texto_item_html}" if texto_item_html else f"<b>{i}.</b>"
+        dados_checklist.append([Paragraph(texto_exibicao, style_tabela_item), "", "", ""])
 
     texto_regra = "Quando o total de acertos findar em acerto parcialmente adequado, considerar a quantidade de acertos imediatamente superior."
     texto_acertos = "Nº acertos______ X (2 itens parcialmente adequados = 1 item adequado) &nbsp;&nbsp; <b>Nota PONTOS (máximo 20 pontos): ________</b>"
@@ -393,14 +362,12 @@ def gerar_bytes_docx_osce(dados_estacao):
 
     p_est = cell_est.paragraphs[0]
     p_est.paragraph_format.space_after = Pt(4)
-    run_est_label = p_est.add_run("Nome do(a) estudante: ")
-    run_est_label.font.size = Pt(9.5)
+    p_est.add_run("Nome do(a) estudante: ").font.size = Pt(9.5)
     p_est.add_run("____________________________________________________________________").font.size = Pt(9.5)
 
     p_prof = cell_prof.paragraphs[0]
     p_prof.paragraph_format.space_after = Pt(4)
-    run_prof_label = p_prof.add_run("Professor(a): ")
-    run_prof_label.font.size = Pt(9.5)
+    p_prof.add_run("Professor(a): ").font.size = Pt(9.5)
     if prof_cadastrado:
         run_prof_val = p_prof.add_run(f" {prof_cadastrado} ")
         run_prof_val.underline = True
@@ -470,47 +437,33 @@ def gerar_bytes_docx_osce(dados_estacao):
     set_cell_background(c_leg, "E6E6E6")
     p_lg = c_leg.paragraphs[0]
     
-    r_lg1 = p_lg.add_run("Instruções do ator: ")
-    r_lg1.bold = True
-    r_lg1.font.size = Pt(8.5)
-    
-    r_lg2 = p_lg.add_run("negrito                ")
-    r_lg2.font.size = Pt(8.5)
-
-    r_lg3 = p_lg.add_run("Instruções esperadas para o(a) estudante: ")
-    r_lg3.bold = True
-    r_lg3.font.size = Pt(8.5)
+    p_lg.add_run("Instruções do ator: ").bold = True
+    p_lg.add_run("negrito                ")
+    p_lg.add_run("Instruções esperadas para o(a) estudante: ").bold = True
 
     r_lg4 = p_lg.add_run("vermelho e itálico")
     r_lg4.italic = True
     r_lg4.font.color.rgb = RGBColor(208, 0, 0)
-    r_lg4.font.size = Pt(8.5)
 
     cell_item_h = tab_check.rows[2].cells[0]
     cell_item_h.merge(tab_check.rows[3].cells[0])
     p_ith = cell_item_h.paragraphs[0]
     p_ith.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r_ith = p_ith.add_run("Itens de desempenho avaliados")
-    r_ith.bold = True
-    r_ith.font.size = Pt(8.5)
+    p_ith.add_run("Itens de desempenho avaliados").bold = True
 
     cell_des_h = tab_check.rows[2].cells[1]
     cell_des_h.merge(tab_check.rows[2].cells[2])
     cell_des_h.merge(tab_check.rows[2].cells[3])
     p_dh = cell_des_h.paragraphs[0]
     p_dh.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r_dh = p_dh.add_run("Desempenho observado")
-    r_dh.bold = True
-    r_dh.font.size = Pt(8.5)
+    p_dh.add_run("Desempenho observado").bold = True
 
     sub_headers = ["Inadequado", "Parcialmente adequado", "Adequado"]
     for idx, sh_text in enumerate(sub_headers, start=1):
         cell_sh = tab_check.rows[3].cells[idx]
         p_sh = cell_sh.paragraphs[0]
         p_sh.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r_sh = p_sh.add_run(sh_text)
-        r_sh.bold = True
-        r_sh.font.size = Pt(8.0)
+        p_sh.add_run(sh_text).bold = True
 
     for i in range(1, 11):
         row_idx = i + 3
@@ -519,13 +472,12 @@ def gerar_bytes_docx_osce(dados_estacao):
         p_item.paragraph_format.space_before = Pt(2)
         p_item.paragraph_format.space_after = Pt(2)
         
-        texto_item_raw = str(dados_estacao.get(f'item_{i}', ''))
-        formatar_paragrafo_item_docx(p_item, i, texto_item_raw)
+        segmentos_item = dados_estacao.get(f'item_struct_{i}', [])
+        formatar_segmentos_docx(p_item, i, segmentos_item)
 
     cell_regra = tab_check.rows[14].cells[0]
     p_reg = cell_regra.paragraphs[0]
-    r_reg = p_reg.add_run("Quando o total de acertos findar em acerto parcialmente adequado, considerar a quantidade de acertos imediatamente superior.")
-    r_reg.font.size = Pt(8.0)
+    p_reg.add_run("Quando o total de acertos findar em acerto parcialmente adequado, considerar a quantidade de acertos imediatamente superior.").font.size = Pt(8.0)
 
     cell_acerto = tab_check.rows[14].cells[1]
     for i in range(2, 4):
@@ -533,21 +485,17 @@ def gerar_bytes_docx_osce(dados_estacao):
     set_cell_background(cell_acerto, "F2F2F2")
     p_ac = cell_acerto.paragraphs[0]
     p_ac.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r_ac = p_ac.add_run("Nº acertos______ X (2 itens parcialmente adequados = 1 item adequado)    Nota PONTOS (máximo 20 pontos): ________")
-    r_ac.font.size = Pt(8.0)
+    p_ac.add_run("Nº acertos______ X (2 itens parcialmente adequados = 1 item adequado)    Nota PONTOS (máximo 20 pontos): ________").font.size = Pt(8.0)
 
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
 
     p_glob_t = doc.add_paragraph()
-    r_gt = p_glob_t.add_run("Avaliação global do professor sobre a postura do estudante:")
-    r_gt.bold = True
-    r_gt.font.size = Pt(9.5)
+    p_glob_t.add_run("Avaliação global do professor sobre a postura do estudante:").bold = True
 
     p_glob_o = doc.add_paragraph()
     p_glob_o.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_glob_o.paragraph_format.space_before = Pt(2)
-    r_go = p_glob_o.add_run("(  ) Insatisfatória         (  ) Aceitável         (  ) Boa         (  ) Muito boa         (  ) Extraordinária")
-    r_go.font.size = Pt(8.5)
+    p_glob_o.add_run("(  ) Insatisfatória         (  ) Aceitável         (  ) Boa         (  ) Muito boa         (  ) Extraordinária")
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -624,10 +572,10 @@ else:
     col_esquerda, col_direita = st.columns([1.1, 1.3], gap="medium")
 
     # --------------------------------------------------
-    # COLUNA ESQUERDA: FORMULÁRIO COM ROLAGEM PRÓPRIA
+    # COLUNA ESQUERDA: FORMULÁRIO COM EDITORES DINÂMICOS
     # --------------------------------------------------
     with col_esquerda:
-        with st.container(height=600, border=True):
+        with st.container(height=650, border=True):
             st.subheader("Cabeçalho")
             lista_componentes = [
                 "Habilidades Médicas I",
@@ -673,21 +621,55 @@ else:
 
             st.divider()
 
-            st.subheader("Itens de Desempenho (Checklist)")
-            st.caption("""
-            💡 **Instruções de Formatação:**
-            - Use `[e]` para rúbrica do **Estudante** (ficará em *vermelho e itálico*)
-            - Use `[a]` para ação do **Ator/Atriz** (ficará em **negrito**)
-            - Use `[f]` para **Fala** do paciente (ficará em **negrito**)
-            """)
-            
-            # Exemplo pré-preenchido para ajudar na navegação do utilizador
-            exemplo_item_3 = '[e] Estudante: perguntou sobre sintomas associados e fatores de melhora ou piora? [f] "Fraqueza intensa nas pernas que piora durante o dia. Um outro médico me pediu esse exame e disse que deu anemia - [a] ator/atriz entrega o exame ao estudante [f] . Que tipo de anemia é essa essa?"'
+            st.subheader("Itens de Desempenho (Checklist Dinâmica)")
+            st.caption("➕ Clique em **'+'** no editor abaixo para adicionar uma nova fala ou rúbrica ao mesmo item!")
 
-            itens = {}
+            opcoes_tipos = ["Rúbrica (Estudante)", "Fala do Paciente", "Ação do Ator/Atriz"]
+            
+            itens_finais_texto = {}
+            itens_finais_estruturado = {}
+
             for i in range(1, 11):
-                val_default = exemplo_item_3 if i == 3 else ""
-                itens[f'item_{i}'] = st.text_input(f"Item {i:02d}", value=val_default, key=f"inp_item_{i}")
+                st.markdown(f"**Item {i:02d}**")
+                
+                # Exemplo preenchido no item 3 para demonstrar
+                if i == 3:
+                    df_default = pd.DataFrame([
+                        {"Tipo": "Rúbrica (Estudante)", "Texto": "Perguntou sobre sintomas associados?"},
+                        {"Tipo": "Fala do Paciente", "Texto": "Sinto uma fraqueza intensa nas pernas que piora durante o dia."},
+                        {"Tipo": "Ação do Ator/Atriz", "Texto": "Ator entrega o exame de sangue ao estudante."},
+                        {"Tipo": "Fala do Paciente", "Texto": "Que tipo de anemia é essa?"}
+                    ])
+                else:
+                    df_default = pd.DataFrame(columns=["Tipo", "Texto"])
+
+                # Tabela interativa para gerir falas e rúbricas na mesma linha
+                df_editado = st.data_editor(
+                    df_default,
+                    num_rows="dynamic",
+                    column_config={
+                        "Tipo": st.column_config.SelectboxColumn(
+                            "Tipo de Elemento",
+                            options=opcoes_tipos,
+                            required=True,
+                            width="medium"
+                        ),
+                        "Texto": st.column_config.TextColumn(
+                            "Texto / Conteúdo",
+                            required=True,
+                            width="large"
+                        )
+                    },
+                    key=f"editor_item_{i}",
+                    use_container_width=True
+                )
+                
+                # Converte os dados do editor para uma lista de dicionários
+                lista_segmentos = df_editado.to_dict(orient="records")
+                
+                # Guarda versão estruturada para renderizadores e versão texto para o banco
+                itens_finais_estruturado[f'item_struct_{i}'] = lista_segmentos
+                itens_finais_texto[f'item_{i}'] = formatar_segmentos_pdf(lista_segmentos)
 
             st.divider()
 
@@ -701,7 +683,8 @@ else:
                 'tarefa_1': proc1,
                 'tarefa_2': proc2,
                 'tarefa_3': proc3,
-                **itens
+                **itens_finais_texto,
+                **itens_finais_estruturado
             }
 
             if st.button("🚀 Gravar Estação no Banco de Dados", type="primary", use_container_width=True):
