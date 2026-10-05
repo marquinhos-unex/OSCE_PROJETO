@@ -121,37 +121,102 @@ def excluir_estacao_db(estacao_id, prof_id):
     return linhas_afetadas > 0
 
 # ==========================================
-# 2. GERADOR DE PDF (E PARA PRÉ-VISUALIZAÇÃO)
+# 2. PROCESSADORES DE TEXTO (FORMATADORES)
 # ==========================================
 
-def processar_item_texto(texto):
-    if not isinstance(texto, str) or pd.isna(texto) or texto.strip() == "":
+def processar_item_texto_pdf(texto):
+    if not isinstance(texto, str) or pd.isna(texto) or not texto.strip():
         return ""
+    
+    # Processamento por Marcadores/Tags [e], [a], [f]
+    if any(tag in texto for tag in ['[e]', '[a]', '[f]', '[estudante]', '[ator]', '[fala]']):
+        t = texto.replace('[estudante]', '[e]').replace('[ator]', '[a]').replace('[fala]', '[f]')
+        partes = re.split(r'(\[e\]|\[a\]|\[f\])', t)
+        
+        html_result = ""
+        tag_atual = None
+        
+        for p in partes:
+            if p in ['[e]', '[a]', '[f]']:
+                tag_atual = p
+            elif p and tag_atual:
+                if tag_atual == '[e]':
+                    html_result += f'<font color="#D00000"><i>{p}</i></font>'
+                elif tag_atual == '[a]':
+                    html_result += f'<b>{p}</b>'
+                elif tag_atual == '[f]':
+                    html_result += f'<b>{p}</b>'
+            elif p:
+                html_result += p
+                
+        return html_result
+
+    # Regras Legadas de Fallback
     if '|' in texto:
         partes = texto.split('|', 1)
         rubrica = partes[0].strip()
         fala_ator = partes[1].strip()
-        if fala_ator and not fala_ator.startswith('"') and not fala_ator.startswith('“'):
+        if fala_ator and not (fala_ator.startswith('"') or fala_ator.startswith('“')):
             fala_ator = f'"{fala_ator}"'
-        return f'<font color="#D00000"><i>{rubrica}</i></font> <font color="#000000">{fala_ator}</font>'
+        return f'<font color="#D00000"><i>{rubrica}</i></font> <b>{fala_ator}</b>'
 
-    match_aspa = re.search(r'["“]', texto)
-    if match_aspa:
-        idx = match_aspa.start()
-        parte_anterior = texto[:idx]
-        fala_ator = texto[idx:]
-        if 'Estudante:' in parte_anterior:
-            partes_rubrica = parte_anterior.split('Estudante:', 1)
-            resultado = f'{partes_rubrica[0]}<font color="#D00000"><i>Estudante:{partes_rubrica[1]}</i></font> <font color="#000000">{fala_ator}</font>'
-        else:
-            resultado = f'{parte_anterior}<font color="#000000">{fala_ator}</font>'
+    if 'Estudante:' in texto:
+        partes = texto.split('Estudante:', 1)
+        return f'{partes[0]}<font color="#D00000"><i>Estudante:{partes[1]}</i></font>'
+        
+    return texto
+
+def formatar_paragrafo_item_docx(paragraph, item_num, texto_raw):
+    p_run = paragraph.add_run(f"{item_num}. ")
+    p_run.bold = True
+    
+    if not isinstance(texto_raw, str) or pd.isna(texto_raw) or not texto_raw.strip():
+        return
+
+    texto = texto_raw.strip()
+
+    # Suporte a Marcadores/Tags [e], [a], [f]
+    if any(tag in texto for tag in ['[e]', '[a]', '[f]', '[estudante]', '[ator]', '[fala]']):
+        t = texto.replace('[estudante]', '[e]').replace('[ator]', '[a]').replace('[fala]', '[f]')
+        partes = re.split(r'(\[e\]|\[a\]|\[f\])', t)
+        
+        tag_atual = None
+        for p in partes:
+            if p in ['[e]', '[a]', '[f]']:
+                tag_atual = p
+            elif p and tag_atual:
+                run = paragraph.add_run(p)
+                if tag_atual == '[e]':
+                    run.italic = True
+                    run.font.color.rgb = RGBColor(208, 0, 0)
+                elif tag_atual in ['[a]', '[f]']:
+                    run.bold = True
+            elif p:
+                paragraph.add_run(p)
+        return
+
+    # Regras Legadas de Fallback
+    if '|' in texto:
+        partes = texto.split('|', 1)
+        run_rub = paragraph.add_run(partes[0].strip() + " ")
+        run_rub.italic = True
+        run_rub.font.color.rgb = RGBColor(208, 0, 0)
+        
+        run_fala = paragraph.add_run(partes[1].strip())
+        run_fala.bold = True
+    elif 'Estudante:' in texto:
+        partes = texto.split('Estudante:', 1)
+        if partes[0]:
+            paragraph.add_run(partes[0])
+        run_est = paragraph.add_run("Estudante:" + partes[1])
+        run_est.italic = True
+        run_est.font.color.rgb = RGBColor(208, 0, 0)
     else:
-        if 'Estudante:' in texto:
-            partes_rubrica = texto.split('Estudante:', 1)
-            resultado = f'{partes_rubrica[0]}<font color="#D00000"><i>Estudante:{partes_rubrica[1]}</i></font>'
-        else:
-            resultado = texto
-    return resultado
+        paragraph.add_run(texto)
+
+# ==========================================
+# 3. GERADOR DE PDF (REPORTLAB)
+# ==========================================
 
 def gerar_bytes_pdf_osce(dados_estacao):
     buffer = io.BytesIO()
@@ -239,7 +304,7 @@ def gerar_bytes_pdf_osce(dados_estacao):
     for i in range(1, 11):
         chave_item = f'item_{i}'
         texto_item_raw = str(dados_estacao.get(chave_item, ''))
-        texto_item_formatado = f"<b>{i}.</b> " + processar_item_texto(texto_item_raw) if (texto_item_raw and texto_item_raw != 'nan') else f"<b>{i}.</b>"
+        texto_item_formatado = f"<b>{i}.</b> " + processar_item_texto_pdf(texto_item_raw) if (texto_item_raw and texto_item_raw != 'nan') else f"<b>{i}.</b>"
         dados_checklist.append([Paragraph(texto_item_formatado, style_tabela_item), "", "", ""])
 
     texto_regra = "Quando o total de acertos findar em acerto parcialmente adequado, considerar a quantidade de acertos imediatamente superior."
@@ -278,44 +343,12 @@ def gerar_bytes_pdf_osce(dados_estacao):
     return buffer.getvalue()
 
 # ==========================================
-# 3. GERADOR DE DOCX (WORD)
+# 4. GERADOR DE DOCX (PYTHON-DOCX)
 # ==========================================
 
 def set_cell_background(cell, fill_hex):
     shading_elm = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{fill_hex}"/>')
     cell._tc.get_or_add_tcPr().append(shading_elm)
-
-def formatar_paragrafo_item_docx(paragraph, item_num, texto_raw):
-    p_run = paragraph.add_run(f"{item_num}. ")
-    p_run.bold = True
-    
-    if not isinstance(texto_raw, str) or pd.isna(texto_raw) or texto_raw.strip() == "":
-        return
-
-    texto = texto_raw.strip()
-    
-    if '|' in texto:
-        partes = texto.split('|', 1)
-        rubrica = partes[0].strip()
-        fala_ator = partes[1].strip()
-        if fala_ator and not (fala_ator.startswith('"') or fala_ator.startswith('“')):
-            fala_ator = f'"{fala_ator}"'
-        
-        run_rub = paragraph.add_run(rubrica + " ")
-        run_rub.italic = True
-        run_rub.font.color.rgb = RGBColor(208, 0, 0)
-        
-        run_fala = paragraph.add_run(fala_ator)
-        run_fala.font.color.rgb = RGBColor(0, 0, 0)
-    elif 'Estudante:' in texto:
-        partes = texto.split('Estudante:', 1)
-        if partes[0]:
-            paragraph.add_run(partes[0])
-        run_est = paragraph.add_run("Estudante:" + partes[1])
-        run_est.italic = True
-        run_est.font.color.rgb = RGBColor(208, 0, 0)
-    else:
-        paragraph.add_run(texto)
 
 def gerar_bytes_docx_osce(dados_estacao):
     doc = docx.Document()
@@ -522,7 +555,7 @@ def gerar_bytes_docx_osce(dados_estacao):
     return buffer.getvalue()
 
 # ==========================================
-# 4. INTERFACE STREAMLIT
+# 5. INTERFACE STREAMLIT
 # ==========================================
 
 st.set_page_config(page_title="Sistema OSCE", layout="wide", initial_sidebar_state="collapsed")
@@ -530,15 +563,6 @@ init_db()
 
 st.markdown("""
     <style>
-    .header-bar {
-        background-color: #E0E0E0;
-        padding: 8px 20px;
-        border-radius: 4px;
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        margin-bottom: 10px;
-    }
     .block-container {
         padding-top: 1rem;
         padding-bottom: 1rem;
@@ -638,9 +662,6 @@ else:
             c_data, c_empty = st.columns(2)
             data = c_data.text_input("Data da Prova", value="20/10/2026", key="data")
 
-            if st.button("Inserir / Salvar Identificação", type="secondary", use_container_width=True):
-                st.toast("Dados do cabeçalho confirmados!", icon="✅")
-
             st.divider()
 
             st.subheader("Inicial (Cenário e Tarefas)")
@@ -653,9 +674,20 @@ else:
             st.divider()
 
             st.subheader("Itens de Desempenho (Checklist)")
+            st.caption("""
+            💡 **Instruções de Formatação:**
+            - Use `[e]` para rúbrica do **Estudante** (ficará em *vermelho e itálico*)
+            - Use `[a]` para ação do **Ator/Atriz** (ficará em **negrito**)
+            - Use `[f]` para **Fala** do paciente (ficará em **negrito**)
+            """)
+            
+            # Exemplo pré-preenchido para ajudar na navegação do utilizador
+            exemplo_item_3 = '[e] Estudante: perguntou sobre sintomas associados e fatores de melhora ou piora? [f] "Fraqueza intensa nas pernas que piora durante o dia. Um outro médico me pediu esse exame e disse que deu anemia - [a] ator/atriz entrega o exame ao estudante [f] . Que tipo de anemia é essa essa?"'
+
             itens = {}
             for i in range(1, 11):
-                itens[f'item_{i}'] = st.text_input(f"Item {i:02d}", key=f"inp_item_{i}")
+                val_default = exemplo_item_3 if i == 3 else ""
+                itens[f'item_{i}'] = st.text_input(f"Item {i:02d}", value=val_default, key=f"inp_item_{i}")
 
             st.divider()
 
@@ -682,19 +714,18 @@ else:
     with col_direita:
         st.markdown("**Pré-visualização do Documento**")
         try:
-            # Genera o PDF para renderizar a imagem de pré-visualização
+            # Gera o PDF em memória e converte a primeira página para imagem PNG
             pdf_bytes = gerar_bytes_pdf_osce(dados_atual)
             
-            # Converter primeira página para imagem PNG (PyMuPDF)
             doc_pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
             page = doc_pdf[0]
             pix = page.get_pixmap(dpi=150)
             img_bytes = pix.tobytes("png")
             
-            # Exibir a imagem do PDF
+            # Exibe a imagem de pré-visualização
             st.image(img_bytes, use_container_width=True)
             
-            # Botões de Download lado a lado
+            # Botões para Download lado a lado
             col_down_pdf, col_down_docx = st.columns(2)
             
             with col_down_pdf:
@@ -707,7 +738,6 @@ else:
                 )
             
             with col_down_docx:
-                # Gerar em memória os bytes do Word (.docx)
                 docx_bytes = gerar_bytes_docx_osce(dados_atual)
                 st.download_button(
                     label="📝 Baixar em Word (.docx)",
